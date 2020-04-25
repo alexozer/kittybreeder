@@ -24,6 +24,8 @@ function launch_terms() {
         term_uuid="$(uuidgen)"
         running_term_path="$RUNNING_DIR"/"$term_uuid"
         mkfifo "$running_term_path"
+
+        # TODO for some reason, this line prevents the kittybreeder lock from ever being acquired again
         kitty --name "$term_uuid" "$0" fakeshell "$running_term_path" & disown
     done
 }
@@ -71,37 +73,40 @@ cmd="${1:-}"
 if [[ "$cmd" == "fakeshell" ]]; then
     eval $(<$2)
 
+elif [[ "${KITTYBREEDER_HAS_LOCK:-}" != 1 ]]; then
+    notify-send 'Acquiring lock'
+    KITTYBREEDER_HAS_LOCK=1 flock -w 5 "$LOCKFILE" "$0" "$@"
+    notify-send 'Releasing lock'
+
 else
-    (
-        flock -x -w 5 200 || echo 'Failed to acquire lock' && exit 1
-        
-        if [[ "$cmd" == "init" ]]; then
-            killall kitty 2> /dev/null || :
+    
+    if [[ "$cmd" == "init" ]]; then
+        killall kitty 2> /dev/null || :
 
-            # Remove sockets manually so we don't have to wait for terminals to die
-            rm -r "$RUNNING_DIR"
-            rm -r "$CLAIMED_DIR"
-            mkdir -p "$RUNNING_DIR"
-            mkdir -p "$CLAIMED_DIR"
+        # Remove sockets manually so we don't have to wait for terminals to die
+        rm -r "$RUNNING_DIR"
+        rm -r "$CLAIMED_DIR"
+        mkdir -p "$RUNNING_DIR"
+        mkdir -p "$CLAIMED_DIR"
+        launch_terms
+    fi
 
-            launch_terms
+    #
+    # elif [[ "$cmd" == "show" || "$cmd" == "showfloat" ]]; then
+    #     set +e
+    #     show_term "$cmd" "$2"
+    #     show_term_ret=$?
+    #     set -e
+    #
+    #     launch_terms
+    #
+    #     exit "$show_term_ret"
+    #
+    # else
+    #     echo "Invalid command: $cmd"
+    #     echo "Usage: $(fast_basename "$0") <init|show|showfloat>"
+    #     exit 1
+    # fi
 
-        elif [[ "$cmd" == "show" || "$cmd" == "showfloat" ]]; then
-            set +e
-            show_term "$cmd" "$2"
-            show_term_ret=$?
-            set -e
-
-            launch_terms
-
-            exit "$show_term_ret"
-
-        else
-            echo "Invalid command: $cmd"
-            echo "Usage: $(fast_basename "$0") <init|show|showfloat>"
-            exit 1
-        fi
-
-    ) 200>"$LOCKFILE"
-
+    echo 'Running under lock!'
 fi
